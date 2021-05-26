@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Stealth Game</title>
+    <style>
+      td {
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body onkeydown="keyPressed(event);">
+    <p>
+      Welcome to my stealth game! You are represented by the blue disk
+      <img src="player.png" style="height:12px; width:12px;" />.
+      Your goal is to sneak into
+      this military base, steal the treasure, and escape without being seen.
+    </p>
+    <p>
+      Move with the QWEADZXC keys. See the diagram. Press "S" to wait one turn. Moving into doors
+      <img src="closedDoor.png" style="height:12px; width:12px;" />
+      opens them.
+      Click on doors while beside them to open or close them without moving.
+    </p>
+    <table border="1">
+      <tr>
+        <td>&#8598<br />&nbsp;Q</td>
+        <td>&uarr;<br />W</td>
+        <td>&nbsp;&#8599<br />E</td>
+      </tr>
+      <tr>
+        <td>&larr;A</td>
+        <td>S<br />(wait)</td>
+        <td>D&rarr;</td>
+      </tr>
+      <tr>
+        <td>&nbsp;Z<br />&#8601;</td>
+        <td>X<br />&darr;</td>
+        <td>C<br />&nbsp;&#8600;</td>
+      </tr>
+    </table>
+    <p>
+      The map is randomly generated. One or more treasures, represented by yellow disks
+      <img src="treasure.png" style="height:12px; width:12px;" />,
+      are hidden inside buildings.
+      They are protected by guards, represented by red triangles
+      <img src="triangle0.png" style="height:12px; width:12px;" />,
+      which point in the direction they're looking. When
+      nearby guards move, you can hear their footsteps.
+    </p>
+    <p>
+      You lose if a guard sees you. Be careful around windows
+      <img src="window.png" style="height:12px; width:12px;" />.
+      Move into a guard (when they don't
+      see you) or click on them, while beside them, to kill them. Move into the treasure, or click on it while beside it,
+      to take it. When you have collected all treasures,
+      escape by running off the map.
+    </p>
+    <p>
+      Press "L" to make a noise, "luring" nearby guards to investigate. It is dangerous but useful.
+    </p>
+    <div id="gameDiv" style="width:1300px;height:600px;position:relative;background:#000000;">
+    </div>
+    <b>Treasure remaining: </b><b id="treasure"></b>
+    <script>
+
+/** CODE STARTS HERE!
+    Game world consists of "tiles"
+    Each tile has a type that determines its properties, including appearance
+    The game also has "Things" that exist on tiles, eg NPCs.
+    The tiles exist in a big 2-D array.
+    Things exist in a single list. Some things can move.
+
+    First, create the "things" array, such that clicking can refer to it
+**/
+
+var things = [];
+
+//Clicking on things calls this function
+click = function(x, y){
+  /**  If you click on something next to your character, you will
+       interact with it. If a thing is there, you will interact
+       with the thing. Else, you will interact with the tile. You
+       may not interact with a tile until removing the thing on it.
+
+       First, are you clicking on a tile beside yourself?
+  **/
+  if (Math.abs(x - things[0].x) < 2 && Math.abs(y - things[0].y) < 2 &&
+      ( x != things[0].x || y != things[0].y )){
+    //Is a thing there?
+    let thingThere = getThing(x, y);
+    if (thingThere != null){
+      thingThere.interact();
+    }
+    else {
+      //Nothing there. Interact with the tile.
+      tiles[x][y].interact();
+    }
+  }
+  //clicking takes one "turn"
+  progressGame();
+};
+
+//Get world size and create the tile array accordingly.
+gameDiv = document.getElementById("gameDiv");
+
+tileSize = 20; //dimensions of a tile, in pixels
+worldWidth = gameDiv.clientWidth / tileSize;
+worldHeight = gameDiv.clientHeight / tileSize;
+
+tiles = [];
+for (let i=0; i<worldWidth; i++){
+  tiles.push([]);
+}
+
+/** We now have the empty tile array.
+    Next step is to create the world!
+
+Tiles come in the following types:
+  Dirt - walkable, transparent
+  Floor - walkable, transparent
+  Tree - unwalkable, opaque
+  Wall - unwalkable, opaque
+  Window - unwalkable, transparent
+  Door - walkable; transparency matches whether it is open
+
+Every tile has "walkable," "transparent," and "seen" as boolean attributes.
+Every tile has an "open" attribute, but only relevant for doors
+"seen" determines whether it is drawn to the map.
+Every tile has its own image, which is drawn if it is "seen"
+Every tile has an "interact" method. This is used to open/close doors.
+
+Create a method for attaching an image to an object
+**/
+
+assignImage = function(o, imageName){
+  o.image = document.createElement("img");
+  o.image.src = imageName;
+  o.image.width = tileSize;
+  o.image.height = tileSize;
+  o.image.style.position = "absolute";
+  gameDiv.appendChild(o.image);
+};
+
+//Create type values for tiles
+DIRT = 0;
+FLOOR = 1;
+TREE = 2;
+WALL = 3;
+WINDOW = 4;
+DOOR = 5;
+
+//Create constructors for tiles
+
+newTile = function(walk, trans, image, typ){  //generic tile constructor
+  var t = {seen:false, walkable:walk, transparent:trans, type:typ, open:true};
+  assignImage(t, image);
+  t.image.style.zIndex = "0"; //draw tiles under other things
+  t.interact = function(){};
+  t.image.onclick = function(){click(t.x, t.y);}; //clicking on these is handled elsewhere
+  return t;
+}
+
+newDirt = function(){
+  return newTile(true, true, "dirt.png", DIRT); 
+};
+newFloor = function(){
+  return newTile(true, true, "floor.png", FLOOR); 
+};
+newTree = function(){
+  return newTile(false, false, "tree"+Math.floor(Math.random()*4)+".png", TREE); 
+};
+newWall = function(){
+  return newTile(false, false, "wall.png", WALL); 
+};
+newWindow = function(){
+  return newTile(false, true, "window.png", WINDOW); 
+};
+newDoor = function(){
+  var t = newTile(true, false, "closedDoor.png", DOOR);
+  t.open = false;
+  t.interact = function(){
+    if (t.open){
+      //Door is open. Close it
+      t.open = false;
+      t.transparent = false;
+      t.image.src = "closedDoor.png";
+    }
+    else {
+      //Door is closed. Open it
+      t.open = true;
+      t.transparent = true;
+      t.image.src = "openDoor.png";
+    }
+  }
+  return t;
+};
+
+//These are guard "activities," which will be mentioned later
+STAND = 1;
+INVESTIGATE = 2;
+RETURN = 3;
+PATROL = 4;
+
+/**  Create the world
+The world consists of tiles arranged in a 2-D array.
+Create objects that correspond with tile locations, one for each tile.
+Put these in a 2-D array.
+
+Randomly try to place buildings on them. Each building includes an imaginary 1-tile
+buffer going around its bottom and right edge, to prevent 2 buildings being placed
+directly adjacently.
+**/
+empty = []; //array representing empty space, where something could be placed
+for (let i=0; i<worldWidth; i++){
+  empty.push([]);
+  for (let j=0; j<worldHeight; j++){
+    //Do not place a building directly next to the top or left edge of the world
+    empty[i][j] = (i > 0 && j > 0);
+  }
+}
+
+/**
+Set minimum building size. This does NOT include the 1-tile buffer around the bottom
+and right edges!
+**/
+minimumBuildingSize = 4;
+maximumBuildingSize = 9;
+
+//Treasure goes inside buildings. Track it.
+var treasureToPlace = 1 + Math.floor(Math.random()*3);
+var treasureRemaining = 0;
+
+//Guards can be inside or outside.
+var guards = 0;
+
+//Now try to make up to 25 buildings
+for (let b=0; b<25; b++){
+  let min = (b == 0 ? 8 : minimumBuildingSize); //First building should be large
+  let w = 1 + min + Math.floor(Math.random()*(1+maximumBuildingSize-min));
+  let h = 1 + min + Math.floor(Math.random()*(1+maximumBuildingSize-min));
+  /** w and h represent the width and height of this potential building.
+      They INCLUDE the 1-tile buffer.
+
+      Now pick a random upper-left corner for this building.
+  **/
+  let x = 1 + Math.floor(Math.random()*(worldWidth-w));
+  let y = 1 + Math.floor(Math.random()*(worldHeight-h));
+  //Go through every tile where the building would be and determine acceptability
+  let canPlace = true;
+  for (let i=x; canPlace && i<x+w; i++){
+    for (let j=y; canPlace && j<y+h; j++){
+      canPlace = empty[i][j];
+    }
+  }
+  if (!canPlace){
+    //oops! Can't place here. Abort and try again.
+    continue;
+  }
+  //If we made it this far, then the building can be placed here. Do it!
+  for (let i=x; i<x+w; i++){
+    for (let j=y; j<y+h; j++){
+      //Set all of the tiles as nonempty.
+      empty[i][j] = false;
+      //Create the actual tiles
+      if (i == x+w-1 || j == y+h-1){
+        tiles[i][j] = newDirt();
+      }
+      else if (i == x || i == x+w-2 || j == y || j == y+h-2){
+        tiles[i][j] = newWall();
+      }
+      else {
+        tiles[i][j] = newFloor();
+      }
+    }
+  }
+  /**  Place doors and windows.
+  Each building gets 1 to 4 doors and randomly placed windows.
+
+  "doors" is an array of which walls have doors, going clockwise from the top (north)
+  **/
+  let doors = []; //record of which walls
+  for (let i=0; i<4; i++){
+    doors.push(Math.random() < 0.4);
+  }
+  //Pick a random wall and definitely give it a door
+  doors[Math.floor(Math.random()*4)] = true;
+  //Make the doors
+  for (let i=0; i<doors.length; i++){
+    if (!doors[i]){
+      //No door here!
+      continue;
+    }
+    //Determine length of relevant wall
+    let wallLength = -3 + (i == 0 || i == 2 ? w : h);
+    //Pick a random spot along the length
+    let doorLocation = Math.floor(Math.random()*wallLength);
+    //Place the door
+    if (i == 0){
+      //Wall at top
+      tiles[x+1+doorLocation][y] = newDoor();
+    }
+    else if (i == 1){
+      //Wall on right
+      tiles[x+w-2][y+1+doorLocation] = newDoor();
+    }
+    else if (i == 2){
+      //Wall on bottom
+      tiles[x+1+doorLocation][y+h-2] = newDoor();
+    }
+    else {
+      //Wall on left
+      tiles[x][y+1+doorLocation] = newDoor();
+    }
+  }
+  //Place up to four random windows
+  for (let i=0; i<4 && Math.random()<0.666; i++){
+    //pick a random place to put a window
+    if (Math.random() < 0.5){
+      //place on a vertical wall
+      var wx = (Math.random() < 0.5 ? x : x + w - 2);
+      var wy = y + 1 + Math.floor(Math.random()*(h-3));
+    }
+    else {
+      //place on a horizontal wall
+      var wx = x + 1 + Math.floor(Math.random()*(w-3));
+      var wy = (Math.random() < 0.5 ? y : y + h - 2);
+    }
+    //window location is now (wx, wy)
+    if (tiles[wx][wy].type == WALL){
+      tiles[wx][wy] = newWindow();
+    }
+  }
+  //Place treasure, if appropriate
+  if (treasureToPlace > 0){
+    treasureToPlace--;
+    things.push(newTreasure(Math.floor(x+(w/2)), Math.floor(y+(h/2))));
+  }
+  //Possibly place a guard patrolling the perimeter
+  if ((x*x) + (y*y) < 15*15){
+    //Do not place a guard too close to the player
+  }
+  else if (Math.random() < 0.3){
+    let points = [];
+    let i0 = Math.floor(Math.random() * 4); //start at a random corner
+    let clockwise = Math.random() < 0.5;
+    for (let i=i0; i<i0 + 4; i++){
+      if (i % 4 == 0){
+        points.push({x:x-1, y:y-1});
+      }
+      else if (i % 4 == 1){
+        points.push({x:x-1+(clockwise ? w : 0), y:y-1+(clockwise ? 0 : h)});
+      }
+      else if (i % 4 == 2){
+        points.push({x:x+w-1, y:y+h-1});
+      }
+      else {
+        points.push({x:x-1+(clockwise ? 0 : w), y:y-1+(clockwise ? h : 0)});
+      }
+    }
+    //create the new patrolling guard
+    things.push(newPatrollingGuard(points));
+  }
+}
+
+document.getElementById("treasure").innerHTML = treasureRemaining;
+
+/**  Buildings finished. Now make all remaining tiles dirt.
+     Also assign each tile its coordinates
+**/
+for (let i=0; i<worldWidth; i++){
+  for (let j=0; j<worldHeight; j++){
+    if (empty[i][j] || tiles[i][j] == null){
+      tiles[i][j] = newDirt();
+    }
+    tiles[i][j].x = i;
+    tiles[i][j].y = j;
+  }
+}
+
+//Go back and place trees randomly. Not too close to the buildings!
+for (let b=0; b<50; b++){
+  let x = 1 + Math.floor(Math.random()*(worldWidth-2));
+  let y = 1 + Math.floor(Math.random()*(worldHeight-2));
+  //try to place a tree at (x,y)
+  let canPlace = true;
+  for (let i=x-1; canPlace && i<=x+1; i++){
+    for (let j=y-1; canPlace && j<=y+1; j++){
+      canPlace = tiles[i][j].type == DIRT || tiles[i][j].type == TREE;
+    }
+  }
+  if (!canPlace){
+    //cannot place a tree here. Abort!
+    continue;
+  }
+  if (tiles[x][y].type == DIRT){
+    //replace this dirt with a tree
+    tiles[x][y] = newTree();
+  }
+}
+
+//Go back and place stationary guards randomly. Try to make up to 9 total
+for (let b=9 - guards; b > 0; b--){
+  let x = Math.floor(Math.random()*(worldWidth));
+  let y = Math.floor(Math.random()*(worldHeight));
+  if (tiles[x][y].type != DIRT && tiles[x][y].type != FLOOR){
+    //Can't place here!
+    continue;
+  }
+  if (getThing(x, y) != null){
+    //something is already here. Abort!
+    continue;
+  }
+  if (getDistance2(x, y, 0, 0) < 20*20){
+    //too close to your own starting point
+    continue;
+  }
+  things.push(newStationaryGuard(x, y, Math.floor(Math.random()*8)));
+}
+
+/**  Here begins "thing" creation
+     Start with a constructor.
+
+     Every thing has an "act" method, though passive things'
+     act method does nothing.
+
+     Every thing also has an "interact" method, which can be
+     used to kill guards
+**/
+function newThing(x, y, imageName){
+  var thing = {x:x, y:y};
+  assignImage(thing, imageName);
+  thing.image.style.zIndex = "1";    //draw things over tiles
+  thing.act = function(){};
+  thing.isGuard = false; //used to identify guards
+  thing.isPlayer = false;//used to identify player
+  thing.isMoving = false; //guards are "visible" when nearby and moving
+  thing.interact = function(){};
+  thing.image.onclick = function(){click(thing.x, thing.y);};
+  thing.remove = function(){  //for removing this from the game
+    thing.image.hidden = true;
+    for (let i=0; i<things.length; i++){
+      if (things[i] == thing){
+        things.splice(i, 1);
+        break;
+      }
+    }
+  };
+  return thing;
+};
+
+//Push the first element to the end to make space
+things.push(things[0]);
+//Create you, the player
+things[0] = (newThing(0, 0, "player.png"));
+things[0].isPlayer = true;
+
+/** Treasure is something you can take. Otherwise, it sits passively.  
+    You must collect it all and escape to win
+**/
+
+function newTreasure(x, y){
+  var t = newThing(x, y, "treasure.png");
+  treasureRemaining++;
+  t.interact = function(){
+    //Take the treasure!
+    t.remove();
+    treasureRemaining--;
+    document.getElementById("treasure").innerHTML = treasureRemaining;
+  };
+  return t;
+};
+
+/**  "Guards" are represented by red triangles, pointing
+     in the direction they face. They are things that can
+     "act." This can involve moving.
+
+     If a guard sees you, you lose. To see you, you must
+     be within the 90-degree triangle of space in front of
+     them, and close enough for them to notice.
+**/
+
+guardVisionDistance = 14; //How far guards can see
+
+/**  Directions are numbered:
+     0 - right
+     1 - upright
+     2 - up
+     3 - upleft
+     4 - left
+     5 - downleft
+     6 - down
+     7 - downright
+**/
+
+function newGuard(x, y, direction){
+  guards++;
+  let guard = newThing(x, y, "triangle" + direction + ".png");
+  guard.direction = direction;
+  guard.isGuard = true;
+  guard.activity = STAND; //default activity.
+  guard.setGuardImage = function(){
+    guard.image.src = "triangle" + guard.direction + ".png";
+  }
+  guard.act = function(){
+    //When a guard acts, they can move.
+    var oldx = guard.x; //for tracking if they moved
+    var oldy = guard.y;
+    if (guard.activity == STAND){
+      //randomly turn, or not
+      let t = Math.random();
+      if (t < 0.1){
+        guard.direction = ( guard.direction + 1 ) % 8; //turn one way
+      }
+      else if (t < 0.2){
+        guard.direction = ( guard.direction + 7) % 8; //turn other way
+      }
+      guard.setGuardImage();
+    }
+    else if (guard.activity == INVESTIGATE){
+      //Have they reached the point to investigate?
+      if (guard.x == guard.tx && guard.y == guard.ty){
+        //Yes. Look around for a bit before returning
+        let t = Math.random();
+        if (t < 0.333){
+          guard.direction = ( guard.direction + 1 ) % 8; //turn one way
+        }
+        else if (t < 0.666){
+          guard.direction = ( guard.direction + 7) % 8; //turn other way
+        }
+        else if (t > 0.7){
+          /** Done investigating
+              Resume patrolling, if appropriate.
+              Else, return to base point
+          **/
+          if (guard.patrolPoints.length > 0){
+            guard.activity = PATROL; //resume patrolling
+          }
+          else {
+            guard.activity = RETURN; //done investigating; return to base
+          }
+        }
+      }
+      else {
+        //navigate toward target point
+        navigateToward(guard, guard.tx, guard.ty);
+      }
+    }
+    else if (guard.activity == PATROL){
+      //Is the guard at a patrol point?
+      if (guard.x == guard.patrolPoints[guard.nextPatrolPoint].x &&
+          guard.y == guard.patrolPoints[guard.nextPatrolPoint].y){
+        //yes! Change "next" patrol point
+        guard.nextPatrolPoint++;
+        guard.nextPatrolPoint %= guard.patrolPoints.length;
+      }
+      //continue patrolling
+      navigateToward(guard, guard.patrolPoints[guard.nextPatrolPoint].x,
+                            guard.patrolPoints[guard.nextPatrolPoint].y);
+    }
+    else { //guard.activity == RETURN
+      //Have they reached the base point?
+      if (guard.x == guard.bx && guard.y == guard.by){
+        //Yes; resume standing
+        guard.activity = STAND;
+      }
+      else {
+        //No; continue walking toward base
+        navigateToward(guard, guard.bx, guard.by);
+      }
+    }
+    //They also check to see if you are visible.
+    let px = things[0].x;
+    let py = things[0].y;
+    let gx = guard.x;
+    let gy = guard.y;
+    if (getDistance2(gx, gy, px, py) <= guardVisionDistance * guardVisionDistance){
+      /**  You are close enough to be seen. Are you within their vision triangle?
+           They get 90 degrees of vision
+      **/
+      let mightSee = false;
+      if (guard.direction % 2 == 0){
+        //guard is facing parallel with a grid axis
+        mightSee = (guard.direction % 6 == 0 ? px+py >= gx+gy : px+py <= gx+gy) && //just changed this
+                   (guard.direction < 3 ? px-py >= gx-gy : px-py <= gx-gy);
+      }
+      else {
+        //guard is facing 45 degrees off from a grid axis
+        mightSee = (guard.direction % 6 == 1 ? px >= gx : px <= gx) &&
+                   (guard.direction < 4 ? py <= gy : py >= gy);
+      }
+      //Are you within line-of-sight?
+      if (mightSee && canSee(guard.x, guard.y, things[0].x, things[0].y)){
+        //seen by guard! You lose!
+        endGame(false);
+      }
+    }
+    guard.isMoving = (oldx != guard.x || oldy != guard.y);
+  };
+  guard.interact = function(){  //"interact" kills a guard
+    guards--;
+    guard.remove();
+  };
+  guard.bx = guard.x; //"bx" is "base x," corresponding to their base position
+  guard.by = guard.y; //Non-patrolling guards will defend their base position
+  guard.tx = guard.x; //"tx" is "target x," corresponding to where they're going
+  guard.ty = guard.y; //(tx,ty) are used when a guard investigates a noise
+  guard.patrolPoints = [];  //an array of (x,y) coordinate pairs.
+                            //if non-empty, the guard will move from one to the next
+  guard.nextPatrolPoint = 0;//The patrol point toward which the guard currently moves
+  return guard;
+}
+
+function newStationaryGuard(x, y, direction){
+  //creates a stationary guard that looks around passively
+  var g = newGuard(x, y, direction);
+  return g;
+}
+
+function newPatrollingGuard(patrolPoints){
+  //The guard will start at patrolPoints[0], facing its next step
+  var g = newGuard(patrolPoints[0].x, patrolPoints[0].y, getDirection(
+          patrolPoints[1].x - patrolPoints[0].x,
+          patrolPoints[1].y - patrolPoints[0].y));
+  g.patrolPoints = patrolPoints;
+  g.activity = PATROL;
+  return g;
+}
+
+function getDirection(dx, dy){  //gets the direction of a displacement
+  if (dx > 0){
+    if (dy > 0){
+      return 7;
+    }
+    else if (dy < 0){
+      return 1;
+    }
+    else {
+      return 0;
+    }
+  }
+  else if (dx < 0){
+    if (dy > 0){
+      return 5;
+    }
+    else if (dy < 0){
+      return 3;
+    }
+    else {
+      return 4;
+    }
+  }
+  else if (dy > 0){
+    return 6;
+  }
+  return 2;
+}
+
+gameHasEnded = false;
+
+//this is called when the game ends. Either you lose or win!
+endGame = function(win){
+  showAll = true; //make everything visible
+  drawWorld();
+  keyPressed = function(){}; //shut down key pressing. The game is over!
+  if (win){
+    alert("You escape with the treasure!");
+  }
+  else {
+    alert("You have been seen! Reload the page to try again.");
+  }
+  gameHasEnded = true;
+};
+
+//This becomes "true" at the end of the game, to reveal things
+showAll = false;
+
+//This function draws the world
+drawWorld = function(){
+  //Iterate through tiles
+  for (let i=0; i<worldWidth; i++){
+    for (let j=0; j<worldHeight; j++){
+      //get this tile
+      let tile = tiles[i][j];
+      //is this tile visible?
+      if (tile.seen){
+        //Yes; draw it
+      }
+      else {
+        //Not yet; should we see it?
+        tile.seen = canSee(things[0].x, things[0].y, i, j);
+      }
+      let image = tile.image;
+      image.style.top = (j*tileSize) + "px";
+      image.style.left = (i*tileSize) + "px";
+      image.hidden = !(tile.seen || showAll);
+    }
+  }
+  //Iterate through things
+  for (let i=0; i<things.length; i++){
+    let thing = things[i];
+    let image = thing.image;
+    if (!showAll && i > 0){
+      /** Draw each thing if visible to the player
+          The player is always thing #0. No need to
+          check if the player is visible.
+      **/
+      if (!canSee(things[0].x, things[0].y, thing.x, thing.y)){
+        //You can hear nearby guards if they are moving
+        if (!thing.isMoving || getDistance2(things[0].x, things[0].y, thing.x, thing.y) > 12*12){
+          //This thing is invisible. Skip it!
+          image.hidden = true;
+          continue;
+        }
+      }
+    }
+    image.style.top = (thing.y*tileSize) + "px";
+    image.style.left = (thing.x*tileSize) + "px";
+    image.hidden = false;
+  }
+}
+
+//Used to determine if a tile is occupied
+function getThing(x, y){
+  for (let i=0; i<things.length; i++){
+    if (things[i].x == x && things[i].y == y){
+      return things[i];
+    }
+  }
+  return null;
+}
+
+/**  getDistance2 gets the square of the distance between points
+     Use it to determine if a distance is greater or lesser than
+     a certain limit.
+     Avoiding a square root makes it faster
+**/
+function getDistance2(x1, y1, x2, y2){
+  return (((x2-x1)*(x2-x1)) + ((y2-y1)*(y2-y1)));
+}
+function getDistance(x1, y1, x2, y2){
+  return Math.sqrt(getDistance2(x1, y1, x2, y2));
+}
+
+var marginOfError = 0.0001; //Related to casting line-of-sight rays
+
+/**
+"canSee" takes a point at (x1,y1) and a tile at (x2,y2) and determines
+whether a person at the CENTER of the (x1,y1) tile could see any part of
+the tile at (x2,y2). It is a line-of-sight algorithm.
+**/
+
+canSee = function(x1, y1, x2, y2){
+  var direction; //general direction of (x2,y2), as seen from (x1,y1)
+  if (x2 > x1){
+    if (y2 > y1){
+      direction = 45;
+    }
+    else if (y2 < y1){
+      direction = 315;
+    }
+    else {
+      //On same row. Perform linear check.
+      for (let i=x1+1; i<x2; i++){
+        if (!tiles[i][y1].transparent){
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  else if (x2 < x1){
+    if (y2 > y1){
+      direction = 135;
+    }
+    else if (y2 < y1){
+      direction = 225;
+    }
+    else {
+      //On same row. Perform linear check.
+      for (let i=x1-1; i>x2; i--){
+        if (!tiles[i][y1].transparent){
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  else if (y2 > y1){
+    //On same column. Perform linear check.
+    for (let i=y1+1; i<y2; i++){
+      if (!tiles[x1][i].transparent){
+        return false;
+      }
+    }
+    return true;
+  }
+  else if (y2 < y1){
+    //On same column. Perform linear check.
+    for (let i=y1-1; i>y2; i--){
+      if (!tiles[x1][i].transparent){
+        return false;
+      }
+    }
+    return true;
+  }
+  else {
+    //Can this point see itself? Yes!
+    return true;
+  }
+
+  /**
+  Next step is to cast a line from (x1,y1) to the corner of the (x2,y2)
+  tile. If the line hits (x2,y2) without intersecting a non-transparent
+  tile, then visibility is positive. Else, cast another line from
+  (x1,y1) to the corner of the obstructing tile and repeat. Eventually,
+  either a line hits (x2,y2) and visibility is achieved, or a line will
+  be cast with a slope too steep to hit (x2,y2), in which case visibility
+  is impossible.
+
+  Find the minimum slope for a line which might hit the (x2,y2) tile
+
+  Also remember (x1,y1) is the tile's CENTER
+  **/
+  x1 += 0.5;
+  y1 += 0.5;
+  //Start with a line that hits (x2,y2) with slope closest to 0
+  if (direction == 45){
+    var slope = (y2-y1) / (x2+1-x1);
+  }
+  else if (direction == 135){
+    var slope = (y2-y1) / (x2-x1);
+  }
+  else if (direction == 225){
+    var slope = (y2+1-y1) / (x2-x1);
+  }
+  else {
+    var slope = (y2+1-y1) / (x2+1-x1);
+  }
+  //add a margin of error
+  if (direction == 45 || direction == 225){
+    slope += marginOfError;
+  }
+  else {
+    slope -= marginOfError;
+  }
+  var nextAttempt = canLineHitTile(x1, y1, x2, y2, direction, slope);
+  for (let iterations=0; iterations<20; iterations++){
+    //"iterations" should not reach 20
+    if (nextAttempt.visible){
+      return true;  //We got it!
+    }
+    //if we made it here, vision was obstructed. Try again with a new slope.
+    if (direction == 45){
+      if (nextAttempt.slope > (y2+1-y1)/(x2-x1)){
+        //Slope too high to hit (x2,y2)!
+        return false;
+      }
+    }
+    else if (direction == 135){
+      if (nextAttempt.slope < (y2+1-y1)/(x2+1-x1)){
+        //Slope too low to hit (x2,y2)!
+        return false;
+      }
+    }
+    else if (direction == 225){
+      if (nextAttempt.slope > (y2-y1)/(x2+1-x1)){
+        //Slope too high to hit (x2,y2)!
+        return false;
+      }
+    }
+    else {
+      if (nextAttempt.slope < (y2-y1)/(x2-x1)){
+        //Slope too low to hit (x2,y2)!
+        return false;
+      }
+    }
+    //If we made it here, try again, but with a new slope.
+    nextAttempt = canLineHitTile(x1, y1, x2, y2, direction, nextAttempt.slope);
+  }
+  alert("too many iterations!");
+};
+
+/**  This tests whether a certain line can hit a certain tile without
+     hitting any non-transparent tiles along the way. Its return value is
+     an object with a boolean value and a slope.
+     If the boolean is true, then the line hits the tile and visibility is
+     achieved. If the boolean is false, the slope is the next slope
+     to try for another line.
+**/
+canLineHitTile = function(x1, y1, x2, y2, direction, slope){
+  //Loop through and look for an intersection
+  if (direction == 45 || direction == 315){
+    //going "right"
+    var xinc = 1; //Direction x increments
+  }
+  else {
+    //going "left"
+    var xinc = -1; //Direction x increments
+  }
+  var x0 = Math.floor(x1);
+  for (var x=x0; (xinc>0 ? x<=x2 : x>=x2); x+=xinc){
+    //Collect all tiles, within this column, hit by this line
+    //They have y values from ymin to ymax
+    //And x values from x to (x+1)
+    if (x == x0){
+      //Special case for the first column
+      if (direction == 45){
+        var ymin = y1;
+        var ymax = y1 + (slope*0.5);
+      }
+      else if (direction == 135){
+        var ymin = y1;
+        var ymax = y1 - (slope*0.5);
+      }
+      else if (direction == 225){
+        var ymin = y1 - (slope*0.5);
+        var ymax = y1;
+      }
+      else {
+        var ymin = y1 + (slope*0.5);
+        var ymax = y1;
+      }
+    }
+    else {
+      var ymin = y1 + (slope*(x-x1));
+      var ymax = y1 + (slope*(x+1-x1));
+      //Swap order if min > max
+      if (ymin > ymax){
+        ymin += ymax;
+        ymax = ymin - ymax;
+        ymin -= ymax;
+      }
+    }
+    //Iterate through them and check for intersections
+    if (direction < 180){
+      //start at a lower y value and count up
+      var y0 = Math.max( Math.floor(ymin), 0 );
+      var yinc = 1;
+    }
+    else {
+      //start at a higher y value and count down
+      var y0 = Math.min( Math.floor(ymax), worldHeight - 1);
+      var yinc = -1;
+      ymin = Math.floor(ymin);
+    }
+    for (let y=y0; (yinc > 0 ? y <= ymax : y >= ymin); y += yinc){
+      //Consider tile with y value of "y"
+      if (x == x2 && y == y2){
+        //This is the tile we want! We can see it!
+        return {visible: true, slope: 0};
+      }
+      else if (!tiles[x][y].transparent){
+        //Intersection!
+        if (x == x1-0.5){
+          //This obstruction is directly above/below (x1,y1)
+          //Finding a line around it would cause problems.
+          //Instead, just give a slope that will stop the algorithm.
+          if (direction == 45){
+            var newslope = ((y2+1-y1)/(x2-x1));
+          }
+          else if (direction == 135){
+            var newslope = ((y2+1-y1)/(x2+1-x1));
+          }
+          else if (direction == 225){
+            var newslope = ((y2-y1)/(x2+1-x1));
+          }
+          else {
+            var newslope = ((y2-y1)/(x2-x1));
+          }
+        }
+        else if (direction == 45){
+          var newslope = (y+1-y1) / (x-x1);
+        }
+        else if (direction == 135){
+          var newslope = (y+1-y1) / (x+1-x1);
+        }
+        else if (direction == 225){
+          var newslope = (y-y1) / (x+1-x1);
+        }
+        else {
+          var newslope = (y-y1) / (x-x1);
+        }
+        newslope += marginOfError*xinc*yinc; //Add a margin of error
+        return {visible: false, slope: newslope};
+      }
+    }
+  }
+  /** If we made it this far, it means the line "missed" the tile.
+      This is probably due to rounding error. The line goes through
+      the tile's corner, but just misses it.
+  **/
+alert('made it too far trying to see '+x2+', '+y2);
+  return {visible:true, slope:0};
+}
+
+/** Key pressing is handled here  **/ 
+keyW = 87;
+keyA = 65;
+keyS = 83;
+keyD = 68;
+keyL = 76;
+keyQ = 81;
+keyE = 69; //nice
+keyZ = 90;
+keyC = 67;
+keyX = 88;
+
+function keyPressed(event){
+  var k = event.keyCode;
+  /**  A key has been pressed.
+       Determine if it means the player is trying to move.
+  **/
+  let px = things[0].x;
+  let py = things[0].y;
+  if (k == keyW){
+    py--;
+  }
+  else if (k == keyA){
+    px--;
+  }
+  else if (k == keyD){
+    px++;
+  }
+  else if (k == keyX){
+    py++;
+  }
+  else if (k == keyQ){
+    py--;
+    px--;
+  }
+  else if (k == keyE){
+    px++;
+    py--;
+  }
+  else if (k == keyZ){
+    px--;
+    py++;
+  }
+  else if (k == keyC){
+    py++;
+    px++;
+  }
+  else if (k == keyS){
+    //S is the "wait a turn" key
+    progressGame();
+  }
+  else if (k == keyL){
+    //"Lure" nearby guards with a sound
+    for (let i=1; i<things.length; i++){
+      //If they are close enough to hear, they will investigate
+      if (things[i].isGuard && 
+          getDistance2(things[0].x, things[0].y, things[i].x, things[i].y) <= 12*12){
+        things[i].activity = INVESTIGATE;
+        things[i].tx = things[0].x;
+        things[i].ty = things[0].y;
+        progressGame();
+      }
+    }
+  }
+  //Did the player try to move?
+  if (px != things[0].x || py != things[0].y){
+    //Yes! Can the player move here?
+    if (px >=0 && px < worldWidth && py >= 0 && py < worldHeight){
+      //It is within the world. Is it walkable?
+      if (tiles[px][py].walkable){
+        //Yes! Interact with any things, then move here
+        let thingThere = getThing(px, py);
+        if (thingThere != null){
+          thingThere.interact();
+        }
+        things[0].x = px;
+        things[0].y = py;
+        //if moving into a closed door, open it.
+        let tile = tiles[px][py];
+        if (tile.type == DOOR && !tile.open){
+          tile.interact();
+        }
+        progressGame();
+      }
+    }
+    else if (treasureRemaining < 1){
+      //You can leave the map once collecting all treasure
+      endGame(true);
+    }
+  }
+};
+
+/**  Pathfinding begins here. I used the A Star algorithm.
+     Recursively, tiles are assigned distances, both to (the destination) and from
+     (the starting point), and "parents."
+     A tile's parent is the parent before it in the path leading to the destination.
+     The "distanceTo" is estimated.
+     Once the destination tile has been assigned a parent, the path can be retraced
+     backward to the starting tile.
+**/
+
+//create "nodes," which stores information about tiles
+var nodes;
+
+//this determines whether the destination has had its values assigned
+destinationAssigned = false;
+
+findPath = function(x1, y1, x2, y2){
+  nodes = [];
+  destinationAssigned = false;
+  for (let i=0; i<worldWidth; i++){
+    nodes.push([]);
+    for (let j=0; j<worldHeight; j++){
+      nodes[i].push({x:i, y:j, parent:null, distanceTo:null, distanceFrom:null});
+    }
+  }
+
+  //assign the starting point its value
+  nodes[x1][y1].parent = nodes[x1][y1];
+  nodes[x1][y1].distanceFrom = 0;
+  nodes[x1][y1].distanceTo = getDistance(x1, y1, x2, y2);
+
+  //now radiate outward, assigning values and parents
+  //"nodesToConsider" should really be a heap, but this program runs so fast
+  //it doesn't matter. Therefore, yes, I am implementing a priority queue with an array.
+  var nodesToConsider = [nodes[x1][y1]];
+
+  while (nodesToConsider.length > 0){
+    //Pick the "node to consider" with the least distance
+    let leastDistance = nodesToConsider[0].distanceTo + nodesToConsider[0].distanceFrom;
+    let chosenNode = 0;
+    for (let i=1; i<nodesToConsider.length; i++){
+      let n = nodesToConsider[i];
+      if (n.distanceTo + n.distanceFrom < leastDistance){
+        //This node may have the least distance
+        leastDistance = n.distanceTo + n.distanceFrom;
+        chosenNode = i;
+      }
+    }
+    //Now nodesToConsider[chosenNode] is the one with the least distance.
+    let node = nodesToConsider[chosenNode];
+    //Is it the chosen node?
+    if (node.x == x2 && node.y == y2){
+      //yes. Retrace the path.
+      break;
+    }
+    //"Consider" it and remove it from the list.
+    nodesToConsider.splice(chosenNode, 1);
+    //Look at each of its neighbors
+    for (let i=0; i<9; i++){
+      var nx = node.x;
+      var ny = node.y;
+      if (i == 4){
+        continue;  //No need to consider the current tile as its own neighbor
+      }
+      if (i < 3){
+        ny--;
+      }
+      else if (i > 5){
+        ny++;
+      }
+      if (i % 3 == 2){
+        nx++;
+      }
+      else if (i % 3 == 0){
+        nx--;
+      }
+      //Consider neighbor node (nx,ny)
+      if (nx < 0 || nx >= worldWidth || ny < 0 || ny >= worldHeight){
+        //Node is not on map. Skip it!
+        continue;
+      }
+      if (!tiles[nx][ny].walkable){
+        //Node cannot be traversed. Skip it!
+        continue;
+      }
+      let thingThere = getThing(nx, ny);
+      if (thingThere != null && !thingThere.isPlayer){
+        //tile is already occupied. Navigate around it!
+        continue;
+      }
+      //Has this node been previously considered?
+      let distanceFrom = nodes[nx][ny].distanceFrom;
+      if (distanceFrom == null){
+        //No. Add it to the list
+        nodesToConsider.push(nodes[nx][ny]);
+        nodes[nx][ny].distanceTo = getDistance(nx, ny, x2, y2);
+      }
+      //Is the chosen node part of the shortest path from it to the starting point?
+      if (distanceFrom == null || distanceFrom > node.distanceFrom + 1){
+        //Yes. Make this node (nx,ny) the child of the chosen node
+        nodes[nx][ny].distanceFrom = node.distanceFrom + 1;
+        nodes[nx][ny].parent = node;
+      }
+    }
+  }
+  //The shortest path should now be found by tracing node parents back from the destination.
+  let path = [];
+  for (var n=nodes[x2][y2]; n!=nodes[x1][y1]; n=n.parent){
+    path.push(n);
+  }
+  return path;
+};
+
+//This is used to move NPCs
+navigateToward = function(thing, x, y){
+  //moves one step toward (x,y) if possible
+  let step = findPath(thing.x, thing.y, x, y).pop(); //next step
+  if (getThing(step.x, step.y) == null){  //tile unoccupied
+    //set the correct direction
+    thing.direction = getDirection(step.x-thing.x, step.y-thing.y);
+    //guard images change
+    if (thing.isGuard){
+      thing.setGuardImage();
+    }
+    thing.x = step.x;
+    thing.y = step.y;
+    //open the door if closed
+    let tile = tiles[step.x][step.y];
+    if (tile.type == DOOR){
+      if (!tile.open){
+        tile.interact();
+      }
+    }
+  }
+}
+
+/** progressGame is the function that "runs" the game.
+    It allows each thing to act, then draws the screen.
+    It is called each time you act.
+
+    You act, then everyone else acts, then the screen is redrawn.
+**/
+function progressGame(){
+  //let each other thing act
+  for (let i=1; i<things.length && !gameHasEnded; i++){
+    things[i].act();
+  }
+  //When everything has been done, redraw.
+  drawWorld();
+}
+
+progressGame();
+
+    </script>
+  </body>
+</html>
