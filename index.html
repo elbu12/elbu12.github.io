@@ -58,9 +58,6 @@
     <p>
       Press "L" to make a noise, "luring" nearby guards to investigate. It is dangerous but useful.
     </p>
-    <p>
-      This game was made by Elliot Burkart.
-    </p>
     <div id="gameDiv" style="width:1300px;height:600px;position:relative;background:#000000;">
     </div>
     <b>Treasure remaining: </b><b id="treasure"></b>
@@ -1118,6 +1115,10 @@ findPath = function(x1, y1, x2, y2){
   nodes[x1][y1].distanceFrom = 0;
   nodes[x1][y1].distanceTo = getDistance(x1, y1, x2, y2);
 
+  //"bestNode" is the node we reached that is closest to the destination.
+  //If we don't find a full path, just navigate toward the best point.
+  var bestNode = nodes[x1][y1];
+
   //now radiate outward, assigning values and parents
   //"nodesToConsider" should really be a heap, but this program runs so fast
   //it doesn't matter. Therefore, yes, I am implementing a priority queue with an array.
@@ -1137,9 +1138,14 @@ findPath = function(x1, y1, x2, y2){
     }
     //Now nodesToConsider[chosenNode] is the one with the least distance.
     let node = nodesToConsider[chosenNode];
-    //Is it the chosen node?
-    if (node.x == x2 && node.y == y2){
-      //yes. Retrace the path.
+    //How close is this to the destination?
+    let distanceTo = node.distanceTo;
+    if (distanceTo < bestNode.distanceTo){
+      //This is the node closest to the destination that we have yet found.
+      bestNode = node;
+    }
+    if (distanceTo == 0){
+      //This is the actual destination node.
       break;
     }
     //"Consider" it and remove it from the list.
@@ -1194,16 +1200,25 @@ findPath = function(x1, y1, x2, y2){
   }
   //The shortest path should now be found by tracing node parents back from the destination.
   let path = [];
-  for (var n=nodes[x2][y2]; n!=nodes[x1][y1]; n=n.parent){
+  //Reconstruct it, step by step. 
+  for (var n=bestNode; n!=nodes[x1][y1]; n=n.parent){
     path.push(n);
   }
+  //Return whatever we have, even if it is empty.
   return path;
 };
 
 //This is used to move NPCs
 navigateToward = function(thing, x, y){
-  //moves one step toward (x,y) if possible
-  let step = findPath(thing.x, thing.y, x, y).pop(); //next step
+  let path = findPath(thing.x, thing.y, x, y);
+  if (path.length == 0){
+    //No path found. Just face toward the destination and give up.
+    thing.direction = getDirection(x-thing.x, y-thing.y);
+    return;
+  }
+  //We made it this far. That means we found a real path.
+  //move one step toward (x,y) if possible
+  let step = path.pop(); //next step
   if (getThing(step.x, step.y) == null){  //tile unoccupied
     //set the correct direction
     thing.direction = getDirection(step.x-thing.x, step.y-thing.y);
